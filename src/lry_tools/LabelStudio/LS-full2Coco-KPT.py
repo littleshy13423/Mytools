@@ -81,8 +81,11 @@ class LSConverter:
             image_id = len(images_coco)
             has_draft = bool(item['drafts'])
             annotations_label_studio = item['annotations'][0]
-            author_id = annotations_label_studio['completed_by']
+            create_author_id = annotations_label_studio['completed_by']
             all_labels = annotations_label_studio['result']
+            created_time = annotations_label_studio['created_at']
+            updated_time = annotations_label_studio['updated_at']
+            updated_author_id = annotations_label_studio['updated_by']
             width, height = None, None
             annotations_dict = {}  # 存储bbox信息 {id: bbox_annotation}
             # 遍历标注，bbox与keypoints分开处理
@@ -124,7 +127,7 @@ class LSConverter:
                     label_studio_id = label['id']
                     value_keys = label['value'].keys()
                     if 'points' in value_keys:
-                        warnings.warn(f'rectanglelabels contains key points, author:{author_id}, Image ID:{label_studio_image_id}, 请检查错误标签（是否存在未提交草稿：{has_draft}）')
+                        warnings.warn(f'rectanglelabels contains key points, author:{create_author_id}, Image ID:{label_studio_image_id}, 请检查错误标签（是否存在未提交草稿：{has_draft}）')
                         continue
                     if label_studio_id in annotations_dict:
                         annotations_dict[label_studio_id]['bbox'] = label
@@ -141,7 +144,7 @@ class LSConverter:
                     parent_id = label.get('parentID')
                     value_keys = label['value'].keys()
                     if 'x' in value_keys:
-                        warnings.warn(f'polygonlabels contains key x, author:{author_id}, Image ID:{label_studio_image_id}, 请检查错误标签（是否存在未提交草稿：{has_draft}）')
+                        warnings.warn(f'polygonlabels contains key x, author:{create_author_id}, Image ID:{label_studio_image_id}, 请检查错误标签（是否存在未提交草稿：{has_draft}）')
                         continue
                     if parent_id:
                         if parent_id not in annotations_dict:
@@ -180,12 +183,12 @@ class LSConverter:
                 for keypoint_ann in keypoint_anns:
                     keypoints, num_keypoints = self._convert_single_keypoint(keypoint_ann, width, height)
                     if num_keypoints != 4:
-                        warnings.warn(f"Number of keypoints is not 4: {num_keypoints}, author:{author_id}, Image ID:{label_studio_image_id}, labelID: {keypoint_ann['id']}, 请检查角点数量（是否存在未提交草稿：{has_draft}）")
+                        warnings.warn(f"Number of keypoints is not 4: {num_keypoints}, author:{create_author_id}, Image ID:{label_studio_image_id}, labelID: {keypoint_ann['id']}, 请检查角点数量（是否存在未提交草稿：{has_draft}）")
                         continue
                     # 检查关键点是否在bbox内
                     abs_points = [(keypoints[i], keypoints[i + 1]) for i in range(0, len(keypoints), 3)]
                     if not all(x_min <= x <= x_max and y_min <= y <= y_max for (x, y) in abs_points):
-                        warnings.warn(f"kpt out of range, author:{author_id}, Image ID:{label_studio_image_id}, labelID: {keypoint_ann['id']}, 请检查角点超出bbox（是否存在未提交草稿：{has_draft}）")
+                        warnings.warn(f"kpt out of range, author:{create_author_id}, Image ID:{label_studio_image_id}, labelID: {keypoint_ann['id']}, 请检查角点超出bbox（是否存在未提交草稿：{has_draft}）")
                         continue
                     polygonlabels = keypoint_ann['value']['polygonlabels'][0]
                     category_id = self.poly_name_to_id[polygonlabels]
@@ -194,11 +197,11 @@ class LSConverter:
                     if category_id == 1:  # 正面角点应逆时针
                         if not self._check_polygon_order(abs_points, expected_clockwise=False):
                             warnings.warn(
-                                f"author:{author_id}, Image ID:{label_studio_image_id}, labelID: {keypoint_ann['id']}, 请检查正面角点标注顺序（是否存在未提交草稿：{has_draft}）")
+                                f"author:{create_author_id}, Image ID:{label_studio_image_id}, labelID: {keypoint_ann['id']}, 请检查正面角点标注顺序（是否存在未提交草稿：{has_draft}）")
                     elif category_id == 3:  # 背面角点应顺时针
                         if not self._check_polygon_order(abs_points, expected_clockwise=True):
                             warnings.warn(
-                                f"author:{author_id}, Image ID:{label_studio_image_id}, labelID: {keypoint_ann['id']}, 请检查背面角点标注顺序（是否存在未提交草稿：{has_draft}）")
+                                f"author:{create_author_id}, Image ID:{label_studio_image_id}, labelID: {keypoint_ann['id']}, 请检查背面角点标注顺序（是否存在未提交草稿：{has_draft}）")
                     annotations_coco.append({
                         'id': len(annotations_coco),
                         'image_id': image_id,
@@ -209,7 +212,8 @@ class LSConverter:
                         'num_keypoints': num_keypoints,
                         'iscrowd': 0,
                         'bbox_label': bbox_ann['value']['rectanglelabels'],
-                        'author_id': author_id,
+                        'create_author_id': create_author_id,
+                        'update_author_id': updated_author_id
                     })
 
             # 处理孤立关键点（尝试空间匹配）
@@ -229,7 +233,7 @@ class LSConverter:
                     x_min, y_min, w, h = bbox
                     x_max = x_min + w
                     y_max = y_min + h
-                    if all(x_min <= x <= x_max and y_min <= y <= y_max for (x, y) in abs_points):
+                    if all((x_min-1) <= x <= (x_max+1) and (y_min-1) <= y <= (y_max+1) for (x, y) in abs_points):
                         polygonlabels = keypoint_ann['value']['polygonlabels'][0]
                         category_id = self.poly_name_to_id[polygonlabels]
                         keypoints, num_keypoints = self._convert_single_keypoint(keypoint_ann, width, height)
@@ -372,8 +376,8 @@ class LSConverter:
 
 def main():
     config = r"D:\MyProjects\ls.xml"
-    input_json = r"D:\MyProjects\project-105-at-2025-10-29-02-37-cbad34d6.json"
-    output_json = r"D:\MyProjects\output2025.json"
+    input_json = r"D:\MyProjects\project-123-at-2025-12-05-07-54-cd1aeae4.json"
+    output_json = r"D:\MyProjects\svc2025_kpt.json"
     converter = LSConverter(config)
     converter.convert_to_coco(input_json, output_json)
 
